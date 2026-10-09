@@ -88,7 +88,7 @@ const langKey = () => { const l=$('lang').value.slice(0,2); return l==='en'?'en'
 // WHISPER ALTERNATIVE: record audio with MediaRecorder, send it to a backend route (/api/transcribe)
 // that calls OpenAI "whisper-1" (language "en" / "es"), then put the result into $('transcript').value.
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec, recording = false, finalText = '';
+let rec, recording = false, base = '';
 
 function setUI(on){
   recording = on;
@@ -100,18 +100,25 @@ function setUI(on){
 
 $('btnStart').onclick = () => {
   if (!SR) { toast('This browser does not support dictation. Use Chrome/Edge or type manually.'); return; }
-  finalText = $('transcript').value ? $('transcript').value.trim() + ' ' : '';
+  base = $('transcript').value ? $('transcript').value.trim() + ' ' : '';
   rec = new SR();
-  rec.lang = $('lang').value; rec.continuous = true; rec.interimResults = true;
+  rec.lang = $('lang').value; rec.continuous = true;
+  rec.interimResults = !/Android/i.test(navigator.userAgent); // Android Chrome repeats interim text
   rec.onresult = e => {
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) finalText += t + ' '; else interim += t;
+    // Rebuild the text from ALL results each time (never append), and merge cumulative duplicates.
+    // Some Chrome versions (esp. on phones) return "okay", "okay can", "okay can you"... as separate results.
+    const parts = [];
+    for (let i = 0; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript.trim();
+      const prev = parts[parts.length - 1];
+      if (prev && t.toLowerCase().startsWith(prev.toLowerCase())) parts[parts.length - 1] = t;
+      else if (t) parts.push(t);
     }
-    $('transcript').value = finalText + interim;
+    $('transcript').value = base + parts.join(' ');
   };
-  rec.onend = () => { if (recording) { try { rec.start(); } catch(e){} } };
+  rec.onend = () => {
+    if (recording) { base = $('transcript').value.trim() + ' '; try { rec.start(); } catch(e){} }
+  };
   rec.onerror = e => { if (e.error === 'not-allowed') { setUI(false); toast('Microphone access denied.'); } };
   rec.start(); setUI(true);
 };
