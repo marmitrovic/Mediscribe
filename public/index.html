@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediScribe</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  #printView{display:none}
+  @media print{
+    #app{display:none!important}
+    #printView{display:block;font-family:Georgia,serif;color:#000;padding:20px}
+    #printView h1{font-size:22px;margin:0;color:#0b2a5b}
+    #printView .hd{border-bottom:2px solid #0b2a5b;padding-bottom:8px;margin-bottom:14px}
+    #printView h3{font-size:14px;margin:14px 0 4px;color:#0b2a5b;text-transform:uppercase}
+    #printView p{white-space:pre-wrap;margin:0;font-size:13px;line-height:1.5}
+  }
+  .rec{animation:pulse 1.2s infinite}@keyframes pulse{50%{opacity:.55}}
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+<div id="app" class="min-h-screen flex flex-col">
+  <header class="bg-blue-900 text-white px-5 py-3 flex items-center justify-between">
+    <div class="text-xl font-bold tracking-tight">Medi<span class="text-sky-300">Scribe</span></div>
+    <div class="text-sm text-blue-200">AI voice assistant for medical reports</div>
+  </header>
+
+  <main class="flex-1 p-4 grid lg:grid-cols-5 gap-4 max-w-7xl w-full mx-auto">
+    <!-- LEFT: dictation -->
+    <section class="lg:col-span-2 bg-white rounded-xl shadow p-4 flex flex-col gap-3">
+      <h2 class="font-semibold text-blue-900">1. Dictation</h2>
+      <div class="grid grid-cols-2 gap-2 text-sm">
+        <input id="clinic" class="border rounded px-2 py-1.5" value="Clinic name" placeholder="Clinic name">
+        <input id="doctor" class="border rounded px-2 py-1.5" placeholder="Doctor">
+        <input id="patient" class="border rounded px-2 py-1.5" placeholder="Patient (full name)">
+        <input id="dob" class="border rounded px-2 py-1.5" placeholder="Date of birth / age">
+      </div>
+      <select id="lang" class="border rounded px-2 py-1.5 text-sm">
+        <option value="en-US">English</option>
+        <option value="es-ES">Español (Spanish)</option>
+        <option value="sr-RS">Srpski (Serbian)</option>
+        <option value="hr-HR">Hrvatski (Croatian)</option>
+        <option value="bs-BA">Bosanski (Bosnian)</option>
+      </select>
+      <div class="flex gap-2">
+        <button id="btnStart" class="flex-1 bg-blue-800 hover:bg-blue-900 text-white font-semibold rounded-lg py-3">🎙 Start dictation</button>
+        <button id="btnStop" disabled class="flex-1 bg-slate-300 text-slate-600 font-semibold rounded-lg py-3">⏹ Stop recording</button>
+      </div>
+      <div id="status" class="text-xs text-slate-500">Ready. You can also type the text manually.</div>
+      <textarea id="transcript" class="border rounded p-2 text-sm flex-1 min-h-[220px]" placeholder="Your dictation will appear here..."></textarea>
+      <button id="btnGen" class="bg-sky-600 hover:bg-sky-700 text-white font-semibold rounded-lg py-3">✨ Generate medical report</button>
+    </section>
+
+    <!-- RIGHT: 4 fields -->
+    <section class="lg:col-span-3 flex flex-col gap-3">
+      <h2 class="font-semibold text-blue-900">2. Report (all fields are editable)</h2>
+      <div class="grid sm:grid-cols-2 gap-3 flex-1">
+        <div class="bg-white rounded-xl shadow p-3 flex flex-col"><label class="text-sm font-semibold text-blue-800 mb-1">a) History (patient complaints)</label><textarea id="f_history" class="border rounded p-2 text-sm flex-1 min-h-[140px]"></textarea></div>
+        <div class="bg-white rounded-xl shadow p-3 flex flex-col"><label class="text-sm font-semibold text-blue-800 mb-1">b) Physical examination</label><textarea id="f_exam" class="border rounded p-2 text-sm flex-1 min-h-[140px]"></textarea></div>
+        <div class="bg-white rounded-xl shadow p-3 flex flex-col"><label class="text-sm font-semibold text-blue-800 mb-1">c) Diagnosis (ICD-10)</label><textarea id="f_diagnosis" class="border rounded p-2 text-sm flex-1 min-h-[140px]"></textarea></div>
+        <div class="bg-white rounded-xl shadow p-3 flex flex-col"><label class="text-sm font-semibold text-blue-800 mb-1">d) Treatment and recommendations</label><textarea id="f_treatment" class="border rounded p-2 text-sm flex-1 min-h-[140px]"></textarea></div>
+      </div>
+      <div class="flex gap-2">
+        <button id="btnCopy" class="flex-1 bg-white border border-blue-800 text-blue-900 font-semibold rounded-lg py-2.5 hover:bg-blue-50">📋 Copy report</button>
+        <button id="btnPrint" class="flex-1 bg-blue-900 text-white font-semibold rounded-lg py-2.5 hover:bg-blue-950">🖨 Print / Save as PDF</button>
+      </div>
+      <p class="text-xs text-slate-500">AI only suggests content. The doctor is responsible for the final report; always verify ICD codes and doses.</p>
+    </section>
+  </main>
+</div>
+<div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-blue-900 text-white text-sm px-4 py-2 rounded-lg shadow hidden"></div>
+<div id="printView"></div>
+
+<script>
+/* ===================== CONFIGURATION ===================== */
+const CONFIG = {
+  // false = local simulation (works offline, no API key needed)
+  // true  = sends the text to server.js -> OpenAI GPT (the key lives in OPENAI_API_KEY on the server, NOT here)
+  USE_REAL_API: false,
+  API_URL: '/api/structure'
+};
+
+const $ = id => document.getElementById(id);
+const toast = m => { const t=$('toast'); t.textContent=m; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),2500); };
+const langKey = () => { const l=$('lang').value.slice(0,2); return l==='en'?'en':l==='es'?'es':'sh'; };
+
+/* ===================== 1. DICTATION (Web Speech API) ===================== */
+// Works in Chrome/Edge. Note: the browser sends audio to its speech service (privacy!).
+// WHISPER ALTERNATIVE: record audio with MediaRecorder, send it to a backend route (/api/transcribe)
+// that calls OpenAI "whisper-1" (language "en" / "es"), then put the result into $('transcript').value.
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec, recording = false, finalText = '';
+
+function setUI(on){
+  recording = on;
+  $('btnStart').disabled = on; $('btnStop').disabled = !on;
+  $('btnStart').className = 'flex-1 font-semibold rounded-lg py-3 ' + (on ? 'bg-slate-300 text-slate-600' : 'bg-blue-800 hover:bg-blue-900 text-white');
+  $('btnStop').className = 'flex-1 font-semibold rounded-lg py-3 ' + (on ? 'bg-red-600 text-white rec' : 'bg-slate-300 text-slate-600');
+  $('status').textContent = on ? '● Recording... speak freely.' : 'Stopped.';
+}
+
+$('btnStart').onclick = () => {
+  if (!SR) { toast('This browser does not support dictation. Use Chrome/Edge or type manually.'); return; }
+  finalText = $('transcript').value ? $('transcript').value.trim() + ' ' : '';
+  rec = new SR();
+  rec.lang = $('lang').value; rec.continuous = true; rec.interimResults = true;
+  rec.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) finalText += t + ' '; else interim += t;
+    }
+    $('transcript').value = finalText + interim;
+  };
+  rec.onend = () => { if (recording) { try { rec.start(); } catch(e){} } };
+  rec.onerror = e => { if (e.error === 'not-allowed') { setUI(false); toast('Microphone access denied.'); } };
+  rec.start(); setUI(true);
+};
+$('btnStop').onclick = () => { setUI(false); rec && rec.stop(); };
+
+/* ===================== 2. AI PROCESSING ===================== */
+// ICD-10 dictionary for the simulation (small example; real GPT suggests codes itself).
+// Each entry: [regex (EN/ES/SR-HR-BS), {en, es, sh names}, code]
+const ICD = [
+  [/tonsillitis|amigdalitis|tonzilit|angin/i, {en:'Acute tonsillitis',es:'Amigdalitis aguda',sh:'Akutni tonzilitis'}, 'J03.9'],
+  [/pharyngitis|faringitis|faringit|upal[ae] grla/i, {en:'Acute pharyngitis',es:'Faringitis aguda',sh:'Akutni faringitis'}, 'J02.9'],
+  [/bronchitis|bronquitis|bronhit/i, {en:'Acute bronchitis',es:'Bronquitis aguda',sh:'Akutni bronhitis'}, 'J20.9'],
+  [/pneumonia|neumon[ií]a|pneumonij|upal[ae] pluća/i, {en:'Pneumonia',es:'Neumonía',sh:'Pneumonija'}, 'J18.9'],
+  [/common cold|upper respiratory|resfriado|catarro|prehlad|infekcij[ae] gornjih/i, {en:'Acute upper respiratory infection',es:'Infección aguda de vías respiratorias altas',sh:'Akutna infekcija gornjih disajnih puteva'}, 'J06.9'],
+  [/influenza|\bflu\b|gripe|\bgrip/i, {en:'Influenza',es:'Gripe',sh:'Gripa'}, 'J11.1'],
+  [/hypertension|high blood pressure|hipertensi[oó]n|tensi[oó]n alta|hipertenzij|visok(i)? pritisak|povišen(i)? pritisak/i, {en:'Essential hypertension',es:'Hipertensión esencial',sh:'Esencijalna hipertenzija'}, 'I10'],
+  [/diabet|dijabet|šećerna/i, {en:'Type 2 diabetes mellitus',es:'Diabetes mellitus tipo 2',sh:'Dijabetes melitus tip 2'}, 'E11.9'],
+  [/migraine|migra[ñn]a|migren/i, {en:'Migraine',es:'Migraña',sh:'Migrena'}, 'G43.9'],
+  [/headache|cefalea|dolor de cabeza|glavobolj/i, {en:'Headache',es:'Cefalea',sh:'Glavobolja'}, 'R51'],
+  [/low back pain|lumbago|lumbalgia|dolor lumbar|lumbalg|krsta|bol u leđima/i, {en:'Low back pain',es:'Lumbalgia',sh:'Lumbalgija'}, 'M54.5'],
+  [/urinary tract infection|\bUTI\b|infecci[oó]n (de orina|urinaria)|cistitis|cystitis|mokraćn/i, {en:'Urinary tract infection',es:'Infección urinaria',sh:'Infekcija mokraćnih puteva'}, 'N39.0'],
+  [/gastritis|gastrit/i, {en:'Gastritis',es:'Gastritis',sh:'Gastritis'}, 'K29.7'],
+  [/asthma|asma|astm/i, {en:'Asthma',es:'Asma',sh:'Astma'}, 'J45.9'],
+  [/allergic rhinitis|hay fever|rinitis al[eé]rgica|alergijski rinitis/i, {en:'Allergic rhinitis',es:'Rinitis alérgica',sh:'Alergijski rinitis'}, 'J30.4']
+];
+// Keyword classifiers (English / Spanish / Serbian-Croatian-Bosnian)
+const RX_DX   = /diagnos|suspect|likely|probabl|impression|diagn[oó]stic|sospech|probable|impresi[oó]n|dijagnoz|sumnj|verovatno|vjerovatno/i;
+const RX_THER = /therapy|treatment|prescrib|recommend|advise|medication|\bmg\b|tablet|capsule|syrup|antibiotic|ibuprofen|paracetamol|follow[- ]?up|review in|\brest\b|terapia|tratamiento|receto|recomiend|recomendaci|medicaci|comprimid|c[aá]psula|jarabe|antibi[oó]tic|ibuprofeno|control|revisi[oó]n en|reposo|terapij|prepis|propis|preporu|savet|savjet|\blek(ovi|a|om)?\b|kapsul|sirup|kontrol|ordinir|mirovanj|odmor/i;
+const RX_OBJ  = /exam|auscult|palpat|inspect|throat|pharyn|tonsil|wheez|murmur|swelling|erythema|blood pressure|\bBP\b|pulse|heart rate|temperature|saturation|spo2|ecg|findings|afebrile|febrile|lungs|abdomen|mmHg|exploraci|palpaci|inspecci|faringe|garganta|am[ií]gdal|sibilan|soplo|edema|eritema|enrojec|tensi[oó]n|pulso|frecuencia card|temperatura|saturaci|hallazgos|afebril|febril|pulmon|pregled|auskult|ždrel|grlo|krajnic|hrip|šum|otok|crven|\bTA\b|pritisak|puls|nalaz|pluća|srčan|trbuh/i;
+const RX_HIST = /complain|reports|presents with|history of|\bsince\b|for (the )?(last )?\w+ days|refiere|desde hace|se queja|acude por|lleva|žali|tegob|od prije|od pre|\bboli/i;
+const SPLIT = /(?<!\bon)\s+(?=(on examination|examination|i suspect|i prescribe|i recommend|diagnosis|treatment|therapy|follow-up|exploración|diagnóstico|sospecho|receto|recomiendo|tratamiento|control|pregledom|pregled|objektivno|dijagnoza|terapija|preporuka|preporučujem|propisujem|kontrola|ordiniram|sumnjam))/gi;
+
+const cap = s => { s = s.trim(); if(!s) return ''; s = s[0].toUpperCase() + s.slice(1); return /[.!?]$/.test(s) ? s : s + '.'; };
+
+function mockStructure(text, lk) {
+  // Speech recognition usually adds no punctuation, so insert a full stop before key phrases.
+  const prot = text.replace(/(\d)\.(\d)/g, '$1\u0001$2'); // protect decimals like 38.2
+  const sentences = prot.replace(SPLIT, '. ').split(/[.!?\n]+/).map(s => s.trim()).filter(Boolean);
+  const out = { history: [], exam: [], diagnosis: [], treatment: [] };
+  sentences.forEach(s => {
+    if (RX_DX.test(s)) out.diagnosis.push(cap(s));
+    else if (RX_THER.test(s)) out.treatment.push(cap(s));
+    else if (RX_HIST.test(s)) out.history.push(cap(s));
+    else if (RX_OBJ.test(s)) out.exam.push(cap(s));
+    else out.history.push(cap(s));
+  });
+  const found = ICD.filter(([rx]) => rx.test(text)).map(([, n, code]) => `• ${n[lk]} (ICD-10: ${code})`);
+  const dx = found.concat(out.diagnosis.filter(s => !ICD.some(([rx]) => rx.test(s))));
+  const fix = a => a.join(' ').replace(/\u0001/g, '.');
+  return {
+    history: fix(out.history),
+    exam: fix(out.exam),
+    diagnosis: dx.length ? dx.join('\n').replace(/\u0001/g, '.') : 'No diagnosis recognised — please enter manually (ICD-10).',
+    treatment: fix(out.treatment)
+  };
+}
+
+async function structure(text) {
+  if (!CONFIG.USE_REAL_API) { await new Promise(r => setTimeout(r, 400)); return mockStructure(text, langKey()); }
+  try {
+    // REAL INTEGRATION: server.js calls OpenAI GPT (the key is in OPENAI_API_KEY on the server)
+    const r = await fetch(CONFIG.API_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text }) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } catch (e) {
+    toast('API error, using simulation.'); return mockStructure(text, langKey());
+  }
+}
+
+const FIELDS = ['history','exam','diagnosis','treatment'];
+$('btnGen').onclick = async () => {
+  const text = $('transcript').value.trim();
+  if (!text) { toast('Dictate or type some text first.'); return; }
+  $('btnGen').textContent = 'Processing...'; $('btnGen').disabled = true;
+  const r = await structure(text);
+  FIELDS.forEach(k => $('f_' + k).value = r[k] || '');
+  $('btnGen').textContent = '✨ Generate medical report'; $('btnGen').disabled = false;
+};
+
+/* ===================== 3. COPY AND PRINT ===================== */
+const today = () => new Date().toLocaleDateString('en-GB');
+function reportText() {
+  return `${$('clinic').value}\nMEDICAL REPORT — ${today()}\nPatient: ${$('patient').value}  (${$('dob').value})\nDoctor: ${$('doctor').value}\n\n` +
+  `HISTORY:\n${$('f_history').value}\n\nPHYSICAL EXAMINATION:\n${$('f_exam').value}\n\n` +
+  `DIAGNOSIS (ICD-10):\n${$('f_diagnosis').value}\n\nTREATMENT AND RECOMMENDATIONS:\n${$('f_treatment').value}\n`;
+}
+$('btnCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText(reportText()); }
+  catch (e) { const t=document.createElement('textarea'); t.value=reportText(); document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+  toast('Report copied.');
+};
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+$('btnPrint').onclick = () => {
+  const sec = (t, id) => `<h3>${t}</h3><p>${esc($(id).value) || '—'}</p>`;
+  $('printView').innerHTML =
+    `<div class="hd"><h1>${esc($('clinic').value)}</h1><div style="font-size:12px">MEDICAL REPORT</div></div>` +
+    `<p>Date: ${today()}<br>Patient: ${esc($('patient').value)} ${$('dob').value ? '('+esc($('dob').value)+')' : ''}<br>Doctor: ${esc($('doctor').value)}</p>` +
+    sec('History','f_history') + sec('Physical examination','f_exam') + sec('Diagnosis (ICD-10)','f_diagnosis') + sec('Treatment and recommendations','f_treatment') +
+    `<p style="margin-top:50px">Doctor's signature and stamp: ______________________</p>`;
+  window.print();
+};
+</script>
+</body>
+</html>
